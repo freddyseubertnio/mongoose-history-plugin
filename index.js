@@ -385,6 +385,10 @@ let historyPlugin = (options = {}) => {
 
       let version = {};
       for (let i = 0; i < histories.length; i++) {
+        // add empty arrays for all keys that do contain a diff of an array - workaround for https://github.com/benjamine/jsondiffpatch/issues/259
+        for (let key in histories[i].diff) {
+          if (!Array.isArray(histories[i].diff[key])) version[key] = [];
+        }
         version = jdf.patch(version, histories[i].diff);
         histories[i].object = jdf.clone(version);
         delete histories[i].diff;
