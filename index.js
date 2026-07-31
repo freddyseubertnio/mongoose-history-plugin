@@ -101,6 +101,26 @@ let historyPlugin = (options = {}) => {
     }
   });
 
+  // jsondiffpatch #259: patching an ARRAY delta (jsondiffpatch marks these with `_t === 'a'`) requires
+  // the target key to already hold an array. Seed a missing key with [] for array deltas ONLY. It must
+  // NOT touch nested OBJECT deltas (sub-documents / Maps), which arrive as plain objects without `_t`:
+  // resetting those to [] destroys the value accumulated so far and makes the next nested modify patch
+  // into `undefined` (crashing with "Cannot read properties of undefined").
+  let seedArrayBases = (base, diff) => {
+    for (let key in diff) {
+      let delta = diff[key];
+      if (
+        delta &&
+        typeof delta === 'object' &&
+        !Array.isArray(delta) &&
+        delta._t === 'a' &&
+        base[key] === undefined
+      ) {
+        base[key] = [];
+      }
+    }
+  };
+
   let query = (method = 'find', options = {}) => {
     let query = Model[method](options.find || {});
 
@@ -352,6 +372,7 @@ let historyPlugin = (options = {}) => {
           semver.lt(item.version, version2get) ||
           item.version === version2get
         ) {
+          seedArrayBases(version, item.diff);
           version = jdf.patch(version, item.diff);
         }
       });
@@ -385,14 +406,23 @@ let historyPlugin = (options = {}) => {
         return histories;
       }
 
+      // Snapshots are rebuilt by cumulatively patching the diffs, which must be replayed in ascending
+      // (chronological) order no matter how the caller asked the result to be sorted — otherwise a
+      // delta is applied against the wrong base. Reconstruct on a chronologically-sorted copy (the
+      // elements are shared references, so setting `.object` is visible through `histories`), then
+      // return `histories` in the originally requested order.
+      let ascending = [...histories].sort((a, b) =>
+        semver.gt(a.version, b.version) ? 1 : semver.lt(a.version, b.version) ? -1 : 0
+      );
+
       let version = {};
+      for (let i = 0; i < ascending.length; i++) {
+        seedArrayBases(version, ascending[i].diff);
+        version = jdf.patch(version, ascending[i].diff);
+        ascending[i].object = jdf.clone(version);
+      }
+
       for (let i = 0; i < histories.length; i++) {
-        // add empty arrays for all keys that do contain a diff of an array - workaround for https://github.com/benjamine/jsondiffpatch/issues/259
-        for (let key in histories[i].diff) {
-          if (!Array.isArray(histories[i].diff[key])) version[key] = [];
-        }
-        version = jdf.patch(version, histories[i].diff);
-        histories[i].object = jdf.clone(version);
         delete histories[i].diff;
       }
 
