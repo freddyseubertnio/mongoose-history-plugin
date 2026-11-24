@@ -63,10 +63,7 @@
     "files": [
       "tests/**/*_test.js"
     ],
-    "failWithoutAssertions": false,
-    "require": [
-      "esm"
-    ]
+    "failWithoutAssertions": false
   },
   "nyc": {
     "exclude": [

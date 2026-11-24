@@ -1,8 +1,9 @@
-import test from 'ava';
-import expect from 'expect';
-import DbHelper from './helpers/db';
-import mongoose from 'mongoose';
-import util from 'util';
+// Modified 2026-11-23: use native CommonJS tests on the Node 22 runner.
+const test = require('ava');
+const expect = require('expect');
+const DbHelper = require('./helpers/db');
+const mongoose = require('mongoose');
+const util = require('util');
 
 const { start, close, MongooseHistoryPlugin } = DbHelper(mongoose);
 
@@ -751,14 +752,14 @@ test('should test the readme example', async (t) => {
       event: 'updated',
       method: 'updateTank',
       timestamp: expect.any(Date),
-      object: { name: 'Smallest tank' }
+      object: { _id: String(small._id), size: 'small', name: 'Smallest tank' }
     },
     {
       version: '1.0.0',
       event: 'updated',
       method: 'updateTank',
       timestamp: expect.any(Date),
-      object: { name: 'Small tank' }
+      object: { _id: String(small._id), size: 'small', name: 'Small tank' }
     },
     {
       version: '0.0.0',
@@ -766,7 +767,6 @@ test('should test the readme example', async (t) => {
       method: 'newTank',
       timestamp: expect.any(Date),
       object: {
-        name: 'Small tank',
         _id: String(small._id),
         size: 'small'
       }

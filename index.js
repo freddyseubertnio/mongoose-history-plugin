@@ -1,3 +1,4 @@
+// Modified 2026-11-23: index history and select/replay logical versions by semver.
 let JsonDiffPatch = require('jsondiffpatch'),
   semver = require('semver');
 
@@ -70,6 +71,10 @@ let historyPlugin = (options = {}) => {
   Schema.set('minimize', false);
   Schema.set('versionKey', false);
   Schema.set('strict', true);
+  Schema.index(
+    { collectionName: 1, collectionId: 1, [pluginOptions.timestampFieldName]: 1 },
+    { name: 'history_lookup' }
+  );
 
   Schema.pre('save', function (next) {
     this[pluginOptions.timestampFieldName] = new Date();
@@ -141,12 +146,14 @@ let historyPlugin = (options = {}) => {
     return query.lean();
   };
 
-  let getPreviousVersion = async (document) => {
-    // get the oldest version from the history collection
+  let latestSemanticHistory = (histories) => histories.reduce((latest, history) =>
+    !latest || semver.gt(history.version, latest.version) ? history : latest,
+    undefined
+  );
+
+  let getPreviousHistory = async (document) => {
     let versions = await document.getVersions();
-    return versions[versions.length - 1] ?
-      versions[versions.length - 1].object :
-      {};
+    return latestSemanticHistory(versions);
   };
 
   let getPopulatedFields = (document) => {
@@ -208,14 +215,15 @@ let historyPlugin = (options = {}) => {
     };
   };
 
-  let saveHistory = async ({ document, diff }) => {
-    let lastHistory = await Model.findOne({
+  let saveHistory = async ({ document, diff, previousHistory }) => {
+    let freshHistories = await Model.find({
       collectionName: getModelName(document.constructor.modelName),
       collectionId: document._id
-    })
-      .sort('-' + pluginOptions.timestampFieldName)
-      .select({ version: 1 });
-
+    }).select({ version: 1, _id: 0 }).lean();
+    let lastHistory = latestSemanticHistory(freshHistories);
+    if (previousHistory && (!lastHistory || semver.gt(previousHistory.version, lastHistory.version))) {
+      lastHistory = previousHistory;
+    }
 
     let obj = {};
     obj.collectionName = getModelName(document.constructor.modelName);
@@ -272,7 +280,7 @@ let historyPlugin = (options = {}) => {
         if (currentDocument.__history !== undefined || pluginOptions.noEventSave) {
           try {
 
-            let previousVersion = await getPreviousVersion(currentDocument);
+            let previousHistory = await getPreviousHistory(currentDocument);
             let populatedFields = getPopulatedFields(currentDocument);
 
             if (pluginOptions.ignorePopulatedFields) {
@@ -280,7 +288,7 @@ let historyPlugin = (options = {}) => {
             }
 
             let currentObject = cleanFields(cloneObjectByJson(currentDocument));
-            let previousObject = cleanFields(cloneObjectByJson(previousVersion));
+            let previousObject = cleanFields(cloneObjectByJson(previousHistory ? previousHistory.object : {}));
 
             if (pluginOptions.ignorePopulatedFields) {
               await repopulate(currentDocument, populatedFields);
@@ -294,7 +302,7 @@ let historyPlugin = (options = {}) => {
             });
 
             if (diff || pluginOptions.noDiffSave || saveWithoutDiff) {
-              await saveHistory({ document: currentDocument, diff });
+              await saveHistory({ document: currentDocument, diff, previousHistory });
             }
 
             return next();
@@ -343,6 +351,9 @@ let historyPlugin = (options = {}) => {
       let histories = await this.getDiffs({
         sort: pluginOptions.timestampFieldName
       });
+      histories = [...histories].sort((a, b) =>
+        semver.gt(a.version, b.version) ? 1 : semver.lt(a.version, b.version) ? -1 : 0
+      );
 
       let lastVersion = histories[histories.length - 1],
         firstVersion = histories[0],

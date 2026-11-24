@@ -10,6 +10,15 @@
 
 # mongoose-history-plugin
 
+Fork modification notice (2026-11-23): `index.js` now declares a nonunique
+`history_lookup` index on `collectionName`, `collectionId`, and the configured
+timestamp field. Snapshot selection, version allocation and exact-version replay
+now follow semantic versions when timestamps tie or disagree. Test files add isolated-database guards and index/legacy-history
+regressions. `package.json` stops preloading the legacy `esm` test loader; tests
+use CommonJS on Node 22. Dependencies remain pinned by the existing lockfile.
+Stored history format and public method signatures remain unchanged. The existing
+Apache-2.0 license and upstream notices are retained.
+
 Mongoose plugin that saves documents history in [JsonPatch](http://jsonpatch.com/) format and [SemVer](http://semver.org/) format.
 
 ## Table of Contents
@@ -410,11 +419,48 @@ AnotherSchema.plugin(
 }
 ```
 
+## History index
+
+The history schema declares `{ collectionName: 1, collectionId: 1, timestamp: 1 }`
+with the name `history_lookup`. A custom `timestampFieldName` replaces `timestamp`.
+The index is nonunique and does not change existing history records.
+Mongoose's existing index configuration controls automatic creation. For populated
+collections, schedule additive index creation before deploying the plugin, inspect
+existing equivalent indexes, and allow the build to finish. Do not use
+`syncIndexes` to install it: that can remove unrelated indexes.
+
+## Version ordering
+
+For valid histories with unique semantic versions, saves compare against the
+highest-version snapshot. Before allocating the next version, a fresh metadata
+read checks the semantic versions currently visible for that document. `getVersion` clamps to the semantic-version bounds and replays diffs in
+semantic-version order. Tied or out-of-order timestamps do not select the save
+base or next version.
+
+`getVersions` still returns rows in the caller's requested sort order. `getDiffs`
+and the exact-version `getDiff` query keep their existing options and shapes.
+Existing history records are not rewritten, and no checkpoint or migration is
+introduced. Replay still materializes the existing snapshots.
+
+Existing duplicate semantic versions remain ambiguous. This change does not
+repair them or make concurrent saves atomic; concurrent writers can still
+allocate the same version or use a stale snapshot. Serialize writes to the same
+document when unique
+version allocation is required.
+
 ## Tests
 
-`npm test`
+Use a disposable local MongoDB 6.0.27 instance. The tests require explicit opt-in
+and generate a separate `mongo_perf_history_` database, which they drop on exit.
+They reject nonlocal endpoints and credentials. Run inside an isolated harness
+network when using the `mongo` hostname:
 
-For development use `npm dev:test`
+```sh
+MONGO_HISTORY_TEST_DB=true MONGO_HISTORY_TEST_URI=mongodb://mongo:27017 yarn test
+```
+
+Use `yarn dev:test` for watch mode. Keep `yarn.lock` unchanged unless intentionally
+updating dependencies.
 
 ## Contributing
 
